@@ -1,0 +1,180 @@
+#!/usr/bin/env bash
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+SCRIPT_NAME=$(basename "$(readlink -f "${BASH_SOURCE[0]}")")
+
+################################################################################
+
+last-patch() {
+   darcs log --last=1 | grep '^Date:' --after-context=1 | tail --lines=1 | sed 's/^  \* //'
+}
+
+stash-dir() {
+   toplevel | sed 's@$@/_darcs/stash@'
+}
+
+stash-idx() {
+   local stash_dir=$1
+
+   ls -1 "$stash_dir" 2> /dev/null | wc --lines
+}
+
+toplevel() {
+   darcs show repo | grep ' *Root: /' | sed 's/^ *Root: //'
+}
+
+################################################################################
+
+cmd_apply() (
+   stash_dir=$1
+
+   cmd_pop "$stash_dir" true false
+)
+
+cmd_clear() (
+   stash_dir=$1
+
+   find "$stash_dir" -type f -delete
+   echo "Cleared stash"
+)
+
+cmd_drop() {
+   stash_dir=$1
+
+   cmd_pop "$stash_dir" false
+}
+
+cmd_list() (
+   stash_dir=$1
+
+   ls -1 "$stash_dir" | sort --numeric --reverse
+)
+
+cmd_pop() (
+   stash_dir=$1
+   apply=${2:-true}
+   drop=${3:-true}
+
+   read -r stash_idx < <(stash-idx "$stash_dir")
+
+   [[ $stash_idx -gt 0 ]] || { echo "No patches!" >&2; exit 1; }
+
+   read -r patch < <(ls "$stash_dir"/"$stash_idx - "*)
+
+   if "$apply"; then
+      darcs apply --all "$patch" # TODO test if no patch
+      darcs unrecord --all --last=1
+   fi
+
+   if "$drop"; then
+      rm "$patch"
+      echo "Dropped $(basename "$patch")"
+   fi
+)
+
+cmd_push() (
+   stash_dir=$1
+   name=${2:-}
+
+   read -r stash_idx < <(stash-idx "$stash_dir")
+
+   [[ -n $name ]] || read -r name < <(last-patch)
+
+   name=$((stash_idx+1))\ -\ $name
+
+   darcs record --all --name="$name"
+   darcs obliterate --all --last=1 --output="$stash_dir"/"$name" --quiet
+)
+
+cmd_show() (
+   stash_dir=$1
+   number=${2:-1}
+
+   cat "$stash_dir"/"$number - "* 2> /dev/null || {
+      echo "Stash index $number not found" >&2
+      exit 1
+   }
+)
+
+################################################################################
+
+help() {
+   cat - <<EOF
+$SCRIPT_NAME - git stash mimic for darcs
+Usage: $SCRIPT_NAME COMMAND
+
+Commands:
+  apply         like pop, but do not remove the state from the stash list.
+  clear         remove all the stash entries.
+  drop          remove a single stash entry from the list of stash entries.
+  list          list the stash entries that you currently have.
+  pop           remove a single stashed patch from the stash list and apply it.
+  push [NAME]   save your local modifications to a new stash entry and
+                remove them from working tree.
+  show [NUMBER] show the changes recorded in the stash entry.
+EOF
+}
+
+main() (
+   read -r parsed < <(getopt --options=h --longoptions=help --name "$SCRIPT_NAME" -- "$@")
+   eval set -- "$parsed"
+
+   while true; do
+      case "$1" in
+         -h|--help)
+            help
+            exit
+            ;;
+         --)
+            shift
+            break
+            ;;
+      esac
+   done
+
+   read -r stash_dir < <(stash-dir)
+
+   [[ -d $stash_dir ]] || {
+      echo "Creating stash directory: $stash_dir" >&2
+      mkdir "$stash_dir"
+   }
+
+   if [[ $# -lt 1 ]]; then
+      echo "No command specified" >&2
+      help
+      exit 64 # EX_USAGE
+   fi
+
+   command=$1
+   shift
+
+   case $command in
+      apply|clear|drop|list|pop)
+         [[ $# -eq 0 ]] || {
+            echo "Command $command does not accept arguments" >&2
+            exit 64 # EX_USAGE
+         }
+
+         cmd_"$command" "$stash_dir"
+         ;;
+      push|show)
+         [[ $# -le 1 ]] || {
+            echo "Command $command only accepts an optional argument" >&2
+            exit 64 # EX_USAGE
+         }
+
+         cmd_"$command" "$stash_dir" "${1:-}"
+         ;;
+      *)
+         echo "Command '$command' unknown" >&2
+         exit 64 # EX_USAGE
+         ;;
+   esac
+)
+
+################################################################################
+
+main "$@"
