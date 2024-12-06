@@ -1,4 +1,4 @@
-# Darcs Stash - git stash mimic for darcs
+# darcs-stash - Git Stash Mimic for Darcs
 
 From `darcs-stash --help`:
 
