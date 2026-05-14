@@ -3,7 +3,7 @@
   description = "git stash mimic for darcs";
 
   inputs.flake-utils.url = "github:numtide/flake-utils";
-  inputs.nixpkgs.url     = "github:NixOS/nixpkgs/nixos-24.11";
+  inputs.nixpkgs.url     = "nixpkgs";
 
   outputs = { self, flake-utils, nixpkgs, ... }:
     flake-utils.lib.eachDefaultSystem (system:
